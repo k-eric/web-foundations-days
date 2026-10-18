@@ -33,7 +33,7 @@ This document specifies the REST API endpoints for managing the library's `books
     "author": "Robert C. Martin",
     "year": 2008
   }
-- Success Status Code: `200 OK`
+- Success Status Code: `201 OK`
 
 ### 5. Update a Book 
 - Method: PUT
