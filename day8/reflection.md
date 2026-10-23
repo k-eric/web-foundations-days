@@ -1,0 +1,5 @@
+# Course Reflection
+
+Reflecting on this web development and system design curriculum, the most challenging concept was architecting systems for high-concurrency scale and managing state consistency, particularly designing mechanisms to prevent race conditions like double-booking in ticketing and POS systems. I overcame this by breaking down relational transactions, isolation levels, and asynchronous queues into practical lab models and applying them step-by-step.
+
+Regarding my capstone project (QuickNotes), based on feedback and architectural refinement, I would improve error handling resilience and add comprehensive automated testing suites to validate asynchronous state syncs under edge cases. Working through these modules has cemented my understanding of how frontend interfaces bridge seamlessly with backend architectures.
