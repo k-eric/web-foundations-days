@@ -21,8 +21,8 @@
 ### Assumptions (Based on Starting Facts)
 - **Registered Users:** 2,000,000
 - **Normal Day Traffic:** 50,000 active visitors/day, each viewing 10 pages = 500,000 page views/day
-- **Normal Ticket Sales:** 5,000 tickets sold per normal day[cite: 7]
-- **"Big Sale" Flash Traffic:** 200,000 users trying to buy 20,000 seats within the first 10 minutes[cite: 7]
+- **Normal Ticket Sales:** 5,000 tickets sold per normal day
+- **"Big Sale" Flash Traffic:** 200,000 users trying to buy 20,000 seats within the first 10 minutes
 
 ### Quantitative Calculations
 - **Normal Read Traffic (Average):**
@@ -30,8 +30,8 @@
 - **Normal Write Traffic (Average):**
   - $5,000 \text{ sales} / 86,400 \text{ seconds} \approx \textbf{0.06 writes/sec}$
 - **Flash Sale Spike (Big Sale):**
-  - **Duration:** 10 minutes = 600 seconds[cite: 7]
-  - **Concurrent Checkout Attempts:** 200,000 users competing for 20,000 seats[cite: 7]
+  - **Duration:** 10 minutes = 600 seconds
+  - **Concurrent Checkout Attempts:** 200,000 users competing for 20,000 seats
   - **Average Request Rate during Spike:** $200,000 / 600 \text{ sec} \approx \textbf{333.33 requests/sec}$ (with peak burst traffic reaching over $1,500 \text{ req/sec}$ when the sale drops).
 
 ---
@@ -92,17 +92,12 @@ CREATE TABLE orders (
     FOREIGN KEY (seat_id) REFERENCES seats(id)
 );
 
-5. Preventing Double-Booking
-To prevent two users from buying the same seat during a flash sale:
+## 5. Preventing Double-Booking
+ 1. Database Transactions & Row-Level Locking: When a user attempts to hold a seat, the system opens an explicit database transaction (BEGIN TRANSACTION) and uses SELECT ... FOR UPDATE to lock the specific seat row.
+ 2. Conditional Status Updates: The server verifies if status = 'available'. If true, it updates the status to held and sets a Redis TTL timer (e.g., 10 minutes). If the user fails to complete checkout within 10 minutes, the Redis expiration triggers a release back to available.
+ 4. Unique Constraints: The composite unique constraint (event_id, seat_number) and the unique constraint on orders(seat_id) strictly prohibit duplicate bookings at the database engine level.
 
-Database Transactions & Row-Level Locking: When a user attempts to hold a seat, the system opens an explicit database transaction (BEGIN TRANSACTION) and uses SELECT ... FOR UPDATE to lock the specific seat row.
-
-Conditional Status Updates: The server verifies if status = 'available'. If true, it updates the status to held and sets a Redis TTL timer (e.g., 10 minutes). If the user fails to complete checkout within 10 minutes, the Redis expiration triggers a release back to available.
-
-Unique Constraints: The composite unique constraint (event_id, seat_number) and the unique constraint on orders(seat_id) strictly prohibit duplicate bookings at the database engine level.
-
-6. Architecture Diagram & Scaling
-Plaintext
+## 6. Architecture Diagram & Scaling
 [Users / Clients]
        │
        ▼
@@ -126,24 +121,23 @@ Plaintext
        ▼
 [ Primary Database ] ──(Async Replication)──► [ Read Replicas ]
  (Writes / Transactions)                     (Event Browsing / Seat Maps)
+
 Component Explanations
-Virtual Queue: Throttles massive flash sale traffic influx, placing users in a fair waiting line before letting them access seat selection.
+ 1.Virtual Queue: Throttles massive flash sale traffic influx, placing users in a fair waiting line before letting them access seat selection.
 
-CDN: Caches static web content and event poster images at global edge locations to minimize latency.
+ 2. CDN: Caches static web content and event poster images at global edge locations to minimize latency.
 
-Load Balancer: Distributes incoming HTTP traffic evenly across multiple stateless application servers.
+ 3. Load Balancer: Distributes incoming HTTP traffic evenly across multiple stateless application servers.
 
-App Servers: Execute business logic, handle API requests, and coordinate seat holding logic.
+ 4. App Servers: Execute business logic, handle API requests, and coordinate seat holding logic.
 
-Redis Cache: Manages lightning-fast temporary seat holds and TTL expirations during peak sales.
+ 5. Redis Cache: Manages lightning-fast temporary seat holds and TTL expirations during peak sales.
 
-Message Queue & Worker: Offloads asynchronous background tasks like payment gateway callbacks and email receipt generation.
+ 6. Message Queue & Worker: Offloads asynchronous background tasks like payment gateway callbacks and email receipt generation.
 
-Primary Database & Read Replicas: Primary DB handles strict transactional checkouts, while read replicas absorb heavy read loads for event browsing.
+ 7. Primary Database & Read Replicas: Primary DB handles strict transactional checkouts, while read replicas absorb heavy read loads for event browsing.
 
-7. Trade-offs & SPOF Mitigation
-Trade-off 1 (Virtual Waiting Room vs. Direct Access): Implementing a virtual queue creates a fair barrier and protects backend servers from crashing under 200,000 concurrent users, but introduces a brief mandatory wait time for users eager to buy tickets.
-
-Trade-off 2 (Strict Transactional Locking vs. High Throughput): Using row-level locking ensures 100% correctness against double-booking, but can introduce minor queuing delays for popular seats during intense flash sales.
-
-SPOF Mitigation: Single points of failure are eliminated by deploying redundant load balancers, horizontally autoscaling application servers, using Redis cluster replication, and configuring master-slave database failover groups.
+ ## 7. Trade-offs & SPOF Mitigation
+  1. Trade-off 1 (Virtual Waiting Room vs. Direct Access): Implementing a virtual queue creates a fair barrier and protects backend servers from crashing under 200,000 concurrent users, but introduces a brief mandatory wait time for users eager to buy tickets.
+  2. Trade-off 2 (Strict Transactional Locking vs. High Throughput): Using row-level locking ensures 100% correctness against double-booking, but can introduce minor queuing delays for popular seats during intense flash sales.
+  3. SPOF Mitigation: Single points of failure are eliminated by deploying redundant load balancers, horizontally autoscaling application servers, using Redis cluster replication, and configuring master-slave database failover groups.
