@@ -3,36 +3,36 @@
 ## 1. Requirements
 
 ### Functional Requirements
-- **Browse Events:** Users can search and view upcoming concerts, sports events, and shows.
-- **View Seat Map:** Users can view real-time seat availability and layout maps for a specific venue.
-- **Hold Seats:** Users can temporarily reserve specific seats during checkout (hold with a TTL).
-- **Process Payment:** Users can securely complete payment to finalize ticket purchases.
-- **View Purchased Tickets:** Users can view their order history and digital tickets.
+- Browse Events: Users can search and view upcoming concerts, sports events, and shows.
+- View Seat Map: Users can view real-time seat availability and layout maps for a specific venue.
+- Hold Seats: Users can temporarily reserve specific seats during checkout with a time-to-live (TTL).
+- Process Payment: Users can securely complete payment to finalize ticket purchases.
+- View Purchased Tickets: Users can view their order history and digital tickets.
 
 ### Non-Functional Requirements
-- **Speed:** Low latency (<200ms) for browsing and seat map rendering.
-- **Correctness:** Absolute data integrity; zero double-bookings under high concurrency.
-- **Fairness:** First-come, first-served allocation during high-demand flash sales without bot exploitation.
+- Speed: Low latency (<200ms) for browsing and seat map rendering.
+- Correctness: Absolute data integrity; zero double-bookings under high concurrency.
+- Fairness: First-come, first-served allocation during high-demand flash sales without bot exploitation.
 
 ---
 
 ## 2. Traffic Estimates & Calculations
 
 ### Assumptions (Based on Starting Facts)
-- **Registered Users:** 2,000,000
-- **Normal Day Traffic:** 50,000 active visitors/day, each viewing 10 pages = 500,000 page views/day
-- **Normal Ticket Sales:** 5,000 tickets sold per normal day
-- **"Big Sale" Flash Traffic:** 200,000 users trying to buy 20,000 seats within the first 10 minutes
+- Registered Users: 2,000,000
+- Normal Day Traffic: 50,000 active visitors/day, each viewing ~9.8 pages = 490,000 page views/day
+- Normal Ticket Sales: 5,000 tickets sold per normal day
+- "Big Sale" Flash Traffic: 200,000 users trying to buy 20,000 seats within the first 10 minutes
 
 ### Quantitative Calculations
-- **Normal Read Traffic (Average):**
-  - $500,000 \text{ views} / 86,400 \text{ seconds} \approx \textbf{5.79 reads/sec}$
-- **Normal Write Traffic (Average):**
-  - $5,000 \text{ sales} / 86,400 \text{ seconds} \approx \textbf{0.06 writes/sec}$
-- **Flash Sale Spike (Big Sale):**
-  - **Duration:** 10 minutes = 600 seconds
-  - **Concurrent Checkout Attempts:** 200,000 users competing for 20,000 seats
-  - **Average Request Rate during Spike:** $200,000 / 600 \text{ sec} \approx \textbf{333.33 requests/sec}$ (with peak burst traffic reaching over $1,500 \text{ req/sec}$ when the sale drops).
+- Normal Read Traffic (Average):
+  - $490,000 \text{ views} / 86,400 \text{ seconds} \approx \mathbf{5.67 \text{ reads/sec}}$
+- Normal Write Traffic (Average):
+  - $5,000 \text{ sales} / 86,400 \text{ seconds} \approx \mathbf{0.06 \text{ writes/sec}}$
+- Flash Sale Spike (Big Sale):
+  - Duration: 10 minutes = 600 seconds
+  - Concurrent Checkout Attempts: 200,000 users competing for 20,000 seats
+  - Average Request Rate during Spike: $200,000 / 600 \text{ sec} \approx \mathbf{333.33 \text{ requests/sec}}$ (with peak burst traffic reaching over $\mathbf{1,500 \text{ req/sec}}$ when the sale drops).
 
 ---
 
@@ -51,10 +51,10 @@
 ## 4. Data Model (Entities & Schema)
 
 ### Tables
-1. **`users`**: Stores user account credentials and profile info.
-2. **`events`**: Stores concert/event details (title, date, venue).
-3. **`seats`**: Stores specific seats for each venue/event with a status (`available`, `held`, `booked`).
-4. **`orders`**: Records completed ticket transactions linking users to purchased seats.
+1. `users`: Stores user account credentials and profile info.
+2. `events`: Stores concert/event details (title, date, venue).
+3. `seats`: Stores specific seats for each venue/event with a status (`available`, `held`, `booked`).
+4. `orders`: Records completed ticket transactions linking users to purchased seats.
 
 ### SQL DDL (`CREATE TABLE`)
 ```sql
@@ -91,13 +91,21 @@ CREATE TABLE orders (
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (seat_id) REFERENCES seats(id)
 );
+```
+
+---
 
 ## 5. Preventing Double-Booking
- 1. Database Transactions & Row-Level Locking: When a user attempts to hold a seat, the system opens an explicit database transaction (BEGIN TRANSACTION) and uses SELECT ... FOR UPDATE to lock the specific seat row.
- 2. Conditional Status Updates: The server verifies if status = 'available'. If true, it updates the status to held and sets a Redis TTL timer (e.g., 10 minutes). If the user fails to complete checkout within 10 minutes, the Redis expiration triggers a release back to available.
- 4. Unique Constraints: The composite unique constraint (event_id, seat_number) and the unique constraint on orders(seat_id) strictly prohibit duplicate bookings at the database engine level.
+To prevent two users from buying the same seat during a flash sale:
+1. Database Transactions & Row-Level Locking: When a user attempts to hold a seat, the system opens an explicit database transaction (`BEGIN TRANSACTION`) and uses `SELECT ... FOR UPDATE` to lock the specific seat row.
+2. Conditional Status Updates: The server verifies if `status = 'available'`. If true, it updates the status to `held` and sets a Redis TTL timer (e.g., 10 minutes). If the user fails to complete checkout within 10 minutes, the Redis expiration triggers a release back to `available`.
+3. Unique Constraints: The composite unique constraint `(event_id, seat_number)` and the unique constraint on `orders(seat_id)` strictly prohibit duplicate bookings at the database engine level.
+
+---
 
 ## 6. Architecture Diagram & Scaling
+
+```text
 [Users / Clients]
        │
        ▼
@@ -121,23 +129,21 @@ CREATE TABLE orders (
        ▼
 [ Primary Database ] ──(Async Replication)──► [ Read Replicas ]
  (Writes / Transactions)                     (Event Browsing / Seat Maps)
+```
 
-Component Explanations
- 1.Virtual Queue: Throttles massive flash sale traffic influx, placing users in a fair waiting line before letting them access seat selection.
+### Component Explanations
+- Virtual Queue: Throttles massive flash sale traffic influx, placing users in a fair waiting line before letting them access seat selection.
+- CDN: Caches static web content and event poster images at global edge locations to minimize latency.
+- Load Balancer: Distributes incoming HTTP traffic evenly across multiple stateless application servers.
+- App Servers: Execute business logic, handle API requests, and coordinate seat holding logic.
+- Redis Cache: Manages lightning-fast temporary seat holds and TTL expirations during peak sales.
+- Message Queue: Buffers asynchronous tasks like payment gateway callbacks and email receipt generation to prevent backend saturation.
+- Worker: Processes background tasks pulled from the message queue reliably.
+- Primary Database & Read Replicas: Primary DB handles strict transactional checkouts, while read replicas absorb heavy read loads for event browsing.
 
- 2. CDN: Caches static web content and event poster images at global edge locations to minimize latency.
+---
 
- 3. Load Balancer: Distributes incoming HTTP traffic evenly across multiple stateless application servers.
-
- 4. App Servers: Execute business logic, handle API requests, and coordinate seat holding logic.
-
- 5. Redis Cache: Manages lightning-fast temporary seat holds and TTL expirations during peak sales.
-
- 6. Message Queue & Worker: Offloads asynchronous background tasks like payment gateway callbacks and email receipt generation.
-
- 7. Primary Database & Read Replicas: Primary DB handles strict transactional checkouts, while read replicas absorb heavy read loads for event browsing.
-
- ## 7. Trade-offs & SPOF Mitigation
-  1. Trade-off 1 (Virtual Waiting Room vs. Direct Access): Implementing a virtual queue creates a fair barrier and protects backend servers from crashing under 200,000 concurrent users, but introduces a brief mandatory wait time for users eager to buy tickets.
-  2. Trade-off 2 (Strict Transactional Locking vs. High Throughput): Using row-level locking ensures 100% correctness against double-booking, but can introduce minor queuing delays for popular seats during intense flash sales.
-  3. SPOF Mitigation: Single points of failure are eliminated by deploying redundant load balancers, horizontally autoscaling application servers, using Redis cluster replication, and configuring master-slave database failover groups.
+## 7. Trade-offs & SPOF Mitigation
+- Trade-off 1 (Pessimistic Locking vs. Database Throughput): Choosing row-level pessimistic locking (`SELECT FOR UPDATE`) guarantees absolute data correctness and prevents double-booking, but sacrifices raw database throughput and increases response latency under high concurrency since competing transactions must queue up.
+- Trade-off 2 (Redis Cache + SQL Database Synchronization): Relying on a Redis cache alongside a persistent SQL database enables lightning-fast seat holds and expiration TTLs, but introduces the operational challenge and complexity of keeping the cache and persistent storage synchronized in the event of node failures.
+- SPOF Mitigation: Single points of failure are eliminated by deploying redundant load balancers, horizontally autoscaling application servers, using Redis cluster replication, and configuring master-slave database failover groups.
